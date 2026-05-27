@@ -102,11 +102,12 @@ python scripts/run_synthetic.py \
   --methods notears notears-l1 corr \
   --lambda1 0.1 \
   --threshold 0.3 \
-  --save-matrices
+  --save-matrices \
+  --n-jobs 6
 
 python scripts/make_figures.py --metrics-csv results/synthetic/synthetic_metrics.csv
 ```
-
+(n-jobs is for parallelism (default = 4))
 Optional with extra baselines:
 
 ```bash

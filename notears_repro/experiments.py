@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -59,6 +60,78 @@ def _evaluate_one(B_true, W_true, X, method: str, lambda1: float, w_threshold: f
     metrics.update(extra)
     return metrics, W_est, B_est
 
+def _run_one_dataset_task(task: Dict) -> List[Dict]:
+    """Run all requested methods for one synthetic dataset.
+
+    This function is top-level on purpose, so it works with multiprocessing on Windows.
+    """
+    d = task["d"]
+    n = task["n"]
+    graph_type = task["graph_type"]
+    sem_type = task["sem_type"]
+    seed = task["seed"]
+    expected_edges = task["expected_edges"]
+    methods = task["methods"]
+    lambda1 = task["lambda1"]
+    w_threshold = task["w_threshold"]
+    standardize_data = task["standardize_data"]
+    save_matrices = task["save_matrices"]
+    matrices_dir = Path(task["matrices_dir"])
+
+    dataset_seed = 100000 * d + 1000 * n + 100 * seed + (0 if graph_type.upper() == "ER" else 50)
+
+    B_true, W_true, X = simulate_dataset(
+        d=d,
+        expected_edges=expected_edges,
+        graph_type=graph_type,
+        n=n,
+        sem_type=sem_type,
+        seed=dataset_seed,
+    )
+
+    if standardize_data:
+        X = standardize(X)
+
+    prefix = f"d{d}_n{n}_{graph_type}_{sem_type}_seed{seed}"
+
+    if save_matrices:
+        np.save(matrices_dir / f"{prefix}_B_true.npy", B_true)
+        np.save(matrices_dir / f"{prefix}_W_true.npy", W_true)
+
+    rows: List[Dict] = []
+
+    for method in methods:
+        metrics, W_est, B_est = _evaluate_one(
+            B_true,
+            W_true,
+            X,
+            method=method,
+            lambda1=lambda1,
+            w_threshold=w_threshold,
+            seed=seed,
+        )
+
+        metrics.update(
+            {
+                "d": d,
+                "n": n,
+                "graph_type": graph_type.upper(),
+                "sem_type": sem_type.lower(),
+                "expected_edges": expected_edges,
+                "lambda1": lambda1 if method.lower() != "notears" else 0.0,
+                "w_threshold": w_threshold,
+            }
+        )
+
+        rows.append(metrics)
+
+        if save_matrices:
+            safe_method = metrics["method"].replace("/", "-").replace(" ", "_")
+            np.save(matrices_dir / f"{prefix}_{safe_method}_W_est.npy", W_est)
+            np.save(matrices_dir / f"{prefix}_{safe_method}_B_est.npy", B_est)
+
+    return rows
+
 
 def run_synthetic_experiment(
     out_dir: str | Path,
@@ -73,19 +146,21 @@ def run_synthetic_experiment(
     w_threshold: float = 0.3,
     standardize_data: bool = True,
     save_matrices: bool = False,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """Run the synthetic reproduction grid.
 
     This covers the central experiment family from the paper: ER/SF graphs,
     Gaussian/Exponential/Gumbel noise, multiple d, multiple n, and SHD/FDR metrics.
+
+    n_jobs > 1 parallelizes across independent synthetic datasets.
+    Each dataset task runs all requested methods for that dataset.
     """
     out_dir = ensure_dir(out_dir)
     matrices_dir = ensure_dir(out_dir / "matrices")
     edge_multipliers = edge_multipliers or {"ER": 2, "SF": 4}
-    rows: List[Dict] = []
 
-    total = len(d_values) * len(n_values) * len(graph_types) * len(sem_types) * len(seeds)
-    pbar = tqdm(total=total, desc="synthetic datasets")
+    tasks: List[Dict] = []
 
     for d in d_values:
         for n in n_values:
@@ -93,51 +168,51 @@ def run_synthetic_experiment(
                 expected_edges = int(edge_multipliers.get(graph_type.upper(), 2) * d)
                 for sem_type in sem_types:
                     for seed in seeds:
-                        dataset_seed = 100000 * d + 1000 * n + 100 * seed + (0 if graph_type.upper() == "ER" else 50)
-                        B_true, W_true, X = simulate_dataset(
-                            d=d,
-                            expected_edges=expected_edges,
-                            graph_type=graph_type,
-                            n=n,
-                            sem_type=sem_type,
-                            seed=dataset_seed,
+                        tasks.append(
+                            {
+                                "d": int(d),
+                                "n": int(n),
+                                "graph_type": graph_type,
+                                "sem_type": sem_type,
+                                "seed": int(seed),
+                                "expected_edges": expected_edges,
+                                "methods": tuple(methods),
+                                "lambda1": float(lambda1),
+                                "w_threshold": float(w_threshold),
+                                "standardize_data": bool(standardize_data),
+                                "save_matrices": bool(save_matrices),
+                                "matrices_dir": str(matrices_dir),
+                            }
                         )
-                        if standardize_data:
-                            X = standardize(X)
 
-                        if save_matrices:
-                            prefix = f"d{d}_n{n}_{graph_type}_{sem_type}_seed{seed}"
-                            np.save(matrices_dir / f"{prefix}_B_true.npy", B_true)
-                            np.save(matrices_dir / f"{prefix}_W_true.npy", W_true)
+    rows: List[Dict] = []
+    n_jobs = max(1, int(n_jobs))
 
-                        for method in methods:
-                            metrics, W_est, B_est = _evaluate_one(
-                                B_true, W_true, X, method=method, lambda1=lambda1, w_threshold=w_threshold, seed=seed
-                            )
-                            metrics.update(
-                                {
-                                    "d": d,
-                                    "n": n,
-                                    "graph_type": graph_type.upper(),
-                                    "sem_type": sem_type.lower(),
-                                    "expected_edges": expected_edges,
-                                    "lambda1": lambda1 if method.lower() != "notears" else 0.0,
-                                    "w_threshold": w_threshold,
-                                }
-                            )
-                            rows.append(metrics)
-                            if save_matrices:
-                                np.save(matrices_dir / f"{prefix}_{metrics['method']}_W_est.npy", W_est)
-                                np.save(matrices_dir / f"{prefix}_{metrics['method']}_B_est.npy", B_est)
-                        pbar.update(1)
-    pbar.close()
+    if n_jobs == 1:
+        for task in tqdm(tasks, desc="synthetic datasets"):
+            rows.extend(_run_one_dataset_task(task))
+    else:
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            futures = [executor.submit(_run_one_dataset_task, task) for task in tasks]
+
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"synthetic datasets ({n_jobs} jobs)",
+            ):
+                rows.extend(future.result())
 
     df = pd.DataFrame(rows)
+
+    sort_cols = ["d", "n", "graph_type", "sem_type", "seed", "method"]
+    if not df.empty:
+        df = df.sort_values(sort_cols).reset_index(drop=True)
+
     df.to_csv(out_dir / "synthetic_metrics.csv", index=False)
     return df
 
 
-def quick_synthetic(out_dir: str | Path) -> pd.DataFrame:
+def quick_synthetic(out_dir: str | Path, n_jobs: int = 1) -> pd.DataFrame:
     """Small run for debugging the pipeline."""
     return run_synthetic_experiment(
         out_dir=out_dir,
@@ -150,4 +225,5 @@ def quick_synthetic(out_dir: str | Path) -> pd.DataFrame:
         lambda1=0.1,
         w_threshold=0.3,
         save_matrices=True,
+        n_jobs=n_jobs,
     )

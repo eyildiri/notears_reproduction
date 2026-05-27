@@ -23,6 +23,7 @@ def parse_args():
     p.add_argument("--lambda1", type=float, default=0.1)
     p.add_argument("--threshold", type=float, default=0.3)
     p.add_argument("--save-matrices", action="store_true")
+    p.add_argument("--n-jobs", type=int, default=4, help="Number of parallel jobs to run. Default 1 (no parallelism).")
     return p.parse_args()
 
 
@@ -30,7 +31,7 @@ def main():
     args = parse_args()
     out_dir = Path(args.out_dir)
     if args.quick:
-        df = quick_synthetic(out_dir)
+        df = quick_synthetic(out_dir, n_jobs=args.n_jobs)
     else:
         df = run_synthetic_experiment(
             out_dir=out_dir,
@@ -41,6 +42,7 @@ def main():
             lambda1=args.lambda1,
             w_threshold=args.threshold,
             save_matrices=args.save_matrices,
+            n_jobs=args.n_jobs,
         )
     save_summary_tables(df, out_dir)
     print(df.head())
