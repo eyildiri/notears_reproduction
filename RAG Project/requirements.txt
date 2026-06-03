@@ -1,6 +1,20 @@
-chromadb
-openai
-python-dotenv
-langchain_community
-langchain_text_splitters
-pypdf
+# FastAPI Server and Web Dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+python-dotenv>=1.0.1
+
+# Vector Database and Storage
+chromadb>=0.4.24
+
+# AI Frameworks and Embedding Models
+google-genai>=0.1.0
+sentence-transformers>=2.5.1
+torch>=2.2.0
+
+# Mathematical and Sparse Retrieval Engines
+rank-bm25>=0.2.2
+numpy>=1.26.0
+
+# Academic Benchmark Dataset Retrieval
+datasets>=2.18.0
