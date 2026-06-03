@@ -118,7 +118,7 @@ def execute_hyde_search(query_text, top_k=3):
 # ==========================================
 # RAGAS EVALUATION FUNCTION
 # ==========================================
-def evaluate_method(method_id: int):
+def evaluate_method(method_id):
     questions = []
     answers = []
     contexts = []
