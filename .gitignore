@@ -5,3 +5,4 @@ results/
 *.npy
 .DS_Store
 RAG Project/chroma_db/
+RAG Project/gcp-key.json
