@@ -46,7 +46,7 @@ tokenized_corpus = [doc.lower().split(" ") for doc in all_documents]
 bm25 = BM25Okapi(tokenized_corpus)
 
 # 4. Load SQuAD dataset for evaluation
-squad = load_dataset("squad", split="validation")[:100]
+squad = load_dataset("squad", split="validation").select(range(100))
 
 # API endpoint used by evaluate_method
 API_URL = "http://localhost:8000/api/ask"
@@ -116,50 +116,6 @@ def execute_hyde_search(query_text, top_k=3):
     return execute_hybrid_search(hypothetical_doc, top_k=top_k)
 
 # ==========================================
-# RAGAS EVALUATION FUNCTION
-# ==========================================
-def evaluate_method(method_id):
-    questions = []
-    answers = []
-    contexts = []
-    ground_truths = []
- 
-    for sample in squad:
-        question = sample['question']
-        ground_truth = sample['answers']['text'][0]  
- 
-        try:
-            response = requests.post(
-                API_URL,
-                json={"question": question, "method": method_id},
-                timeout=60
-            )
-            response.raise_for_status()
-            result = response.json()
- 
-            questions.append(question)
-            answers.append(result["answer"])
-            contexts.append(result["retrieved_context"])
-            ground_truths.append(ground_truth)
- 
-        except Exception as e:
-            print(f"Error processing question: {question}\nError: {str(e)}")
- 
-    ragas_dataset = Dataset.from_dict({
-        "question": questions,
-        "answer": answers,
-        "retrieved_context": contexts,
-        "ground_truth": ground_truths
-    })
- 
-    scores = evaluate(
-        ragas_dataset,
-        metrics=[faithfulness, answer_relevancy, context_recall]
-    )
- 
-    return scores
-
-# ==========================================
 # FASTAPI ROUTER ENDPOINTS
 # ==========================================
 @app.post("/api/ask", response_model=QueryResponse)
@@ -204,3 +160,30 @@ The data:
         retrieved_context=contexts,
         answer=answer_text
     )
+
+# ==========================================
+# RAGAS EVALUATION FUNCTION
+# ==========================================
+def evaluate_method(method_id: int):
+    results = []
+ 
+    for sample in squad:
+        try:
+            response = requests.post(
+                API_URL,
+                json={"question": sample['question'], "method": method_id},
+                timeout=60
+            )
+            response.raise_for_status()
+            results.append((QueryResponse(**response.json()), sample['answers']['text'][0]))
+        except Exception as e:
+            print(f"Error processing question: {sample['question']}\nError: {str(e)}")
+ 
+    ragas_dataset = Dataset.from_dict({
+        "question":          [r.question          for r, _  in results],
+        "answer":            [r.answer            for r, _  in results],
+        "retrieved_context": [r.retrieved_context for r, _  in results],
+        "ground_truth":      [gt                  for _, gt in results],
+    })
+ 
+    return evaluate(ragas_dataset, metrics=[faithfulness, answer_relevancy, context_recall])
