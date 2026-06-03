@@ -94,9 +94,17 @@ def execute_reranking(query_text, top_k=3):
     return [candidate_docs[idx] for idx in sorted_indices[:top_k]]
 
 def execute_hyde_search(query_text, top_k=3):
-    hyde_prompt = f"Write a brief, hypothetical paragraph answering the following question: '{query_text}'"
+    hyde_prompt = f"""Write a factual paragraph that would likely appear in a document answering the following question.
+    
+    Question: '{query_text}'
+    
+    Paragraph:
+    """
     hyde_response = ai_client.models.generate_content(model="gemini-2.5-flash", contents=hyde_prompt)
-    return execute_hybrid_search(hyde_response.text, top_k=top_k)
+    hypothetical_doc = hyde_response.text
+    print("Original Query:", query_text)
+    print("Generated HyDE Document:", hypothetical_doc)
+    return execute_hybrid_search(hypothetical_doc, top_k=top_k)
 
 
 # ==========================================
