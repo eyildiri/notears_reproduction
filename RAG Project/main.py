@@ -1,4 +1,5 @@
 import os
+import requests
 import numpy as np
 import chromadb
 from fastapi import FastAPI, HTTPException
@@ -7,6 +8,9 @@ from google import genai
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 from dotenv import load_dotenv
+from datasets import Dataset, load_dataset
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_recall
 
 # 1. Environment initialization and GCP Credential Mapping
 load_dotenv()
@@ -41,6 +45,11 @@ all_documents = all_db_data['documents']
 tokenized_corpus = [doc.lower().split(" ") for doc in all_documents]
 bm25 = BM25Okapi(tokenized_corpus)
 
+# 4. Load SQuAD dataset for evaluation
+squad = load_dataset("squad", split="validation")[:100]
+
+# API endpoint used by evaluate_method
+API_URL = "http://localhost:8000/api/ask"
 
 # ==========================================
 # REQUEST MODELING (Pydantic schemas)
@@ -106,6 +115,49 @@ def execute_hyde_search(query_text, top_k=3):
     print("Generated HyDE Document:", hypothetical_doc)
     return execute_hybrid_search(hypothetical_doc, top_k=top_k)
 
+# ==========================================
+# RAGAS EVALUATION FUNCTION
+# ==========================================
+def evaluate_method(method_id: int):
+    questions = []
+    answers = []
+    contexts = []
+    ground_truths = []
+ 
+    for sample in squad:
+        question = sample['question']
+        ground_truth = sample['answers']['text'][0]  
+ 
+        try:
+            response = requests.post(
+                API_URL,
+                json={"question": question, "method": method_id},
+                timeout=60
+            )
+            response.raise_for_status()
+            result = response.json()
+ 
+            questions.append(question)
+            answers.append(result["answer"])
+            contexts.append(result["retrieved_context"])
+            ground_truths.append(ground_truth)
+ 
+        except Exception as e:
+            print(f"Error processing question: {question}\nError: {str(e)}")
+ 
+    ragas_dataset = Dataset.from_dict({
+        "question": questions,
+        "answer": answers,
+        "retrieved_context": contexts,
+        "ground_truth": ground_truths
+    })
+ 
+    scores = evaluate(
+        ragas_dataset,
+        metrics=[faithfulness, answer_relevancy, context_recall]
+    )
+ 
+    return scores
 
 # ==========================================
 # FASTAPI ROUTER ENDPOINTS
