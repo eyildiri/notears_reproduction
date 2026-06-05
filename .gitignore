@@ -4,6 +4,6 @@ __pycache__/
 results/
 *.npy
 .DS_Store
-RAG Project/chroma_db/
-RAG Project/.env
-RAG Project/gcp-key.json
+chroma_db/
+.env
+gcp-key.json
